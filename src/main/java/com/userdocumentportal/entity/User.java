@@ -23,10 +23,12 @@ public class User {
     private Long id;
 
     @NotBlank
-    private String firstName;
+    @Column(name = "company_name", unique = true)
+    private String companyName;
 
     @NotBlank
-    private String lastName;
+    @Column(name = "full_name")
+    private String fullName;
 
     @NotBlank
     @Email

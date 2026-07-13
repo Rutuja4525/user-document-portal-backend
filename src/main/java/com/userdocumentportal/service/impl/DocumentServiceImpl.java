@@ -2,13 +2,14 @@ package com.userdocumentportal.service.impl;
 
 import com.userdocumentportal.dto.DocumentDto;
 import com.userdocumentportal.entity.Document;
-import com.userdocumentportal.entity.Property;
+import com.userdocumentportal.entity.User;
 import com.userdocumentportal.exception.FileNotFoundException;
 import com.userdocumentportal.exception.StorageException;
 import com.userdocumentportal.repository.DocumentRepository;
-import com.userdocumentportal.repository.PropertyRepository;
+import com.userdocumentportal.repository.UserRepository;
 import com.userdocumentportal.service.DocumentService;
 import com.userdocumentportal.service.S3Service;
+import com.userdocumentportal.service.DocumentProcessingService;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -19,6 +20,7 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.IOException;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
 @Service
@@ -30,15 +32,18 @@ public class DocumentServiceImpl implements DocumentService {
     private DocumentRepository documentRepository;
 
     @Autowired
-    private PropertyRepository propertyRepository;
+    private UserRepository userRepository;
 
     @Autowired
     private S3Service s3Service;
 
+    @Autowired
+    private DocumentProcessingService processingService;
+
     @Override
-    public List<DocumentDto> getDocumentsByProperty(Long propertyId) {
-        logger.debug("Fetching documents from database for property ID: {}", propertyId);
-        List<Document> docs = documentRepository.findByPropertyId(propertyId);
+    public List<DocumentDto> getDocumentsByUser(Long userId) {
+        logger.debug("Fetching documents from database for user ID: {}", userId);
+        List<Document> docs = documentRepository.findByUserId(userId);
         return docs.stream().map(this::convertToDto).collect(Collectors.toList());
     }
 
@@ -50,13 +55,13 @@ public class DocumentServiceImpl implements DocumentService {
     }
 
     @Override
-    public void uploadDocument(Long propertyId, MultipartFile file, String category) {
-        logger.info("Starting upload document workflow for property ID: {}, category: {}", propertyId, category);
+    public void uploadDocument(Long userId, MultipartFile file, String category) {
+        logger.info("Starting upload document workflow for user ID: {}, category: {}", userId, category);
         
-        Property property = propertyRepository.findById(propertyId)
+        User user = userRepository.findById(userId)
                 .orElseThrow(() -> {
-                    logger.warn("Upload failed: Property not found with ID: {}", propertyId);
-                    return new FileNotFoundException("Property not found with id: " + propertyId);
+                    logger.warn("Upload failed: User not found with ID: {}", userId);
+                    return new FileNotFoundException("User not found with id: " + userId);
                 });
 
         String originalFilename = file.getOriginalFilename();
@@ -101,15 +106,31 @@ public class DocumentServiceImpl implements DocumentService {
                 .category(category)
                 .size(sizeStr)
                 .uploadDate(LocalDate.now())
-                .status("Pending")
+                .status("Uploaded")
                 .contentType(file.getContentType())
                 .s3Key(s3Key)
-                .property(property)
+                .user(user)
                 .build();
 
         Document savedDoc = documentRepository.save(doc);
         logger.info("Document metadata successfully saved to database. Document ID: {}, assigned key: '{}'", 
                 savedDoc.getId(), s3Key);
+
+        // Trigger processing workflow in background thread
+        CompletableFuture.runAsync(() -> {
+            try {
+                logger.info("Background thread: starting processing for Document ID: {}", savedDoc.getId());
+                savedDoc.setStatus("Processing");
+                documentRepository.save(savedDoc);
+                
+                processingService.processDocument(savedDoc.getId());
+                logger.info("Background thread: successfully processed Document ID: {}", savedDoc.getId());
+            } catch (Exception e) {
+                logger.error("Background thread: failed to process Document ID: {}", savedDoc.getId(), e);
+                savedDoc.setStatus("Failed");
+                documentRepository.save(savedDoc);
+            }
+        });
     }
 
     @Override
@@ -125,6 +146,28 @@ public class DocumentServiceImpl implements DocumentService {
         logger.info("Document ID: {} matches S3 key: '{}'. Downloading file content from S3.", id, doc.getS3Key());
         byte[] fileData = s3Service.downloadFile(doc.getS3Key());
         logger.info("File download successful for S3 key: '{}', downloaded size: {} bytes", doc.getS3Key(), fileData.length);
+        
+        return fileData;
+    }
+
+    @Override
+    public byte[] downloadProcessedDocument(Long id) {
+        logger.info("Starting processed download workflow for document ID: {}", id);
+        
+        Document doc = documentRepository.findById(id)
+                .orElseThrow(() -> {
+                    logger.warn("Download failed: Document metadata not found in database for ID: {}", id);
+                    return new FileNotFoundException("Document not found with id: " + id);
+                });
+
+        if (doc.getProcessedS3Key() == null) {
+            logger.warn("Download failed: Document ID {} does not have a processed S3 file.", id);
+            throw new StorageException("Document has not been processed yet.");
+        }
+
+        logger.info("Document ID: {} matches processed S3 key: '{}'. Downloading.", id, doc.getProcessedS3Key());
+        byte[] fileData = s3Service.downloadFile(doc.getProcessedS3Key());
+        logger.info("File download successful for S3 key: '{}', downloaded size: {} bytes", doc.getProcessedS3Key(), fileData.length);
         
         return fileData;
     }
@@ -174,7 +217,7 @@ public class DocumentServiceImpl implements DocumentService {
                 .size(doc.getSize())
                 .date(doc.getUploadDate())
                 .status(doc.getStatus())
-                .propertyId(doc.getProperty() != null ? doc.getProperty().getId() : null)
+                .userId(doc.getUser() != null ? doc.getUser().getId() : null)
                 .s3Key(doc.getS3Key())
                 .processedS3Key(doc.getProcessedS3Key())
                 .contentType(doc.getContentType())

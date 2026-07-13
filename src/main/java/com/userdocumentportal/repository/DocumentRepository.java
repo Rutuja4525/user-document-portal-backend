@@ -9,5 +9,5 @@ import java.util.List;
 
 @Repository
 public interface DocumentRepository extends JpaRepository<Document, Long> {
-    List<Document> findByPropertyId(Long propertyId);
+    List<Document> findByUserId(Long userId);
 }

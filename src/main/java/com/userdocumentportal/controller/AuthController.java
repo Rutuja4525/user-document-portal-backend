@@ -71,8 +71,8 @@ public class AuthController {
             return ResponseEntity.ok(new JwtResponse(jwt,
                     userDetails.getId(),
                     userDetails.getEmail(),
-                    userDetails.getFirstName(),
-                    userDetails.getLastName(),
+                    userDetails.getCompanyName(),
+                    userDetails.getFullName(),
                     role));
         } catch (BadCredentialsException e) {
             logger.warn("Login failed for email: {} - Bad credentials / invalid password", loginRequest.getEmail());
@@ -94,22 +94,19 @@ public class AuthController {
                     .body(new MessageResponse("Error: Email is already in use!"));
         }
 
-        // Create new user's account
-        Role userRole = Role.TENANT;
-        if (signUpRequest.getRole() != null) {
-            try {
-                userRole = Role.valueOf(signUpRequest.getRole().toUpperCase());
-            } catch (IllegalArgumentException e) {
-                logger.warn("Registration failed: Invalid role requested: {}", signUpRequest.getRole());
-                return ResponseEntity
-                        .badRequest()
-                        .body(new MessageResponse("Error: Invalid Role!"));
-            }
+        if (userRepository.existsByCompanyName(signUpRequest.getCompanyName())) {
+            logger.warn("Registration failed: Company Name {} is already in use!", signUpRequest.getCompanyName());
+            return ResponseEntity
+                    .badRequest()
+                    .body(new MessageResponse("Error: Company Name is already in use!"));
         }
 
+        // Create new user's account
+        Role userRole = Role.OWNER; // default to OWNER for Property Management Companies
+
         User user = User.builder()
-                .firstName(signUpRequest.getFirstName())
-                .lastName(signUpRequest.getLastName())
+                .companyName(signUpRequest.getCompanyName())
+                .fullName(signUpRequest.getFullName())
                 .email(signUpRequest.getEmail())
                 .phone(signUpRequest.getPhone())
                 .password(encoder.encode(signUpRequest.getPassword()))
@@ -176,8 +173,8 @@ public class AuthController {
                 }
 
                 user = User.builder()
-                        .firstName(firstName)
-                        .lastName(lastName)
+                        .companyName(firstName + " Inc")
+                        .fullName(firstName + " " + lastName)
                         .email(email)
                         .authProvider(AuthProvider.GOOGLE)
                         .googleId(googleId)
@@ -196,8 +193,8 @@ public class AuthController {
             return ResponseEntity.ok(new JwtResponse(jwt,
                     user.getId(),
                     user.getEmail(),
-                    user.getFirstName(),
-                    user.getLastName(),
+                    user.getCompanyName(),
+                    user.getFullName(),
                     user.getRole().name()));
 
         } catch (Exception e) {

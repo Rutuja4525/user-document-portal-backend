@@ -18,19 +18,19 @@ public class DocumentDto {
     private String size;
     private LocalDate date;
     private String status;
-    private Long propertyId;
+    private Long userId;
     private String s3Key;
     private String processedS3Key;
     private String contentType;
 
     // Constructor matching original DocumentDto for backwards compatibility
-    public DocumentDto(Long id, String name, String category, String size, LocalDate date, String status, Long propertyId) {
+    public DocumentDto(Long id, String name, String category, String size, LocalDate date, String status, Long userId) {
         this.id = id;
         this.name = name;
         this.category = category;
         this.size = size;
         this.date = date;
         this.status = status;
-        this.propertyId = propertyId;
+        this.userId = userId;
     }
 }

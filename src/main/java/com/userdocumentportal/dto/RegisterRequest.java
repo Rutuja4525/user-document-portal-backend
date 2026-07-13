@@ -7,10 +7,10 @@ import lombok.Data;
 @Data
 public class RegisterRequest {
     @NotBlank
-    private String firstName;
+    private String companyName;
 
     @NotBlank
-    private String lastName;
+    private String fullName;
 
     @NotBlank
     @Email
@@ -21,5 +21,5 @@ public class RegisterRequest {
     @NotBlank
     private String password;
 
-    private String role; // "TENANT" or "OWNER"
+    private String role;
 }

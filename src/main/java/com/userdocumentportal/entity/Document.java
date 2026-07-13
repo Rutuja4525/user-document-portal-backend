@@ -32,7 +32,7 @@ public class Document {
     private String processedS3Key;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "property_id")
+    @JoinColumn(name = "user_id")
     @JsonIgnore
-    private Property property;
+    private User user;
 }
