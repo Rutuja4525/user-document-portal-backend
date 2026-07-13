@@ -22,10 +22,14 @@ public class Document {
     private LocalDate uploadDate;
     private String status; // Approved, Pending, Rejected
 
-    @Lob
-    @Column(columnDefinition = "LONGBLOB")
-    @JsonIgnore
-    private byte[] data;
+    @Column(name = "content_type")
+    private String contentType;
+
+    @Column(name = "s3_key", nullable = false)
+    private String s3Key;
+
+    @Column(name = "processed_s3_key")
+    private String processedS3Key;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "property_id")

@@ -13,12 +13,16 @@ import com.userdocumentportal.security.jwt.JwtUtils;
 import com.userdocumentportal.security.services.UserDetailsImpl;
 
 import jakarta.validation.Valid;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
@@ -30,6 +34,8 @@ import java.util.Optional;
 @RestController
 @RequestMapping("/api/auth")
 public class AuthController {
+
+    private static final Logger logger = LoggerFactory.getLogger(AuthController.class);
 
     @Autowired
     AuthenticationManager authenticationManager;
@@ -48,27 +54,41 @@ public class AuthController {
 
     @PostMapping("/signin")
     public ResponseEntity<?> authenticateUser(@Valid @RequestBody LoginRequest loginRequest) {
+        logger.info("Login attempt received for email: {}", loginRequest.getEmail());
 
-        Authentication authentication = authenticationManager.authenticate(
-                new UsernamePasswordAuthenticationToken(loginRequest.getEmail(), loginRequest.getPassword()));
+        try {
+            Authentication authentication = authenticationManager.authenticate(
+                    new UsernamePasswordAuthenticationToken(loginRequest.getEmail(), loginRequest.getPassword()));
 
-        SecurityContextHolder.getContext().setAuthentication(authentication);
-        String jwt = jwtUtils.generateJwtToken(authentication);
+            SecurityContextHolder.getContext().setAuthentication(authentication);
+            String jwt = jwtUtils.generateJwtToken(authentication);
 
-        UserDetailsImpl userDetails = (UserDetailsImpl) authentication.getPrincipal();
-        String role = userDetails.getAuthorities().iterator().next().getAuthority();
+            UserDetailsImpl userDetails = (UserDetailsImpl) authentication.getPrincipal();
+            String role = userDetails.getAuthorities().iterator().next().getAuthority();
 
-        return ResponseEntity.ok(new JwtResponse(jwt,
-                userDetails.getId(),
-                userDetails.getEmail(),
-                userDetails.getFirstName(),
-                userDetails.getLastName(),
-                role));
+            logger.info("Login successful for email: {}, assigned role: {}", loginRequest.getEmail(), role);
+
+            return ResponseEntity.ok(new JwtResponse(jwt,
+                    userDetails.getId(),
+                    userDetails.getEmail(),
+                    userDetails.getFirstName(),
+                    userDetails.getLastName(),
+                    role));
+        } catch (BadCredentialsException e) {
+            logger.warn("Login failed for email: {} - Bad credentials / invalid password", loginRequest.getEmail());
+            throw e;
+        } catch (AuthenticationException e) {
+            logger.warn("Login failed for email: {} - Unauthorized / Account issue - {}", loginRequest.getEmail(), e.getMessage());
+            throw e;
+        }
     }
 
     @PostMapping("/register")
     public ResponseEntity<?> registerUser(@Valid @RequestBody RegisterRequest signUpRequest) {
+        logger.info("Registration attempt received for email: {}", signUpRequest.getEmail());
+
         if (userRepository.existsByEmail(signUpRequest.getEmail())) {
+            logger.warn("Registration failed: Email {} is already in use!", signUpRequest.getEmail());
             return ResponseEntity
                     .badRequest()
                     .body(new MessageResponse("Error: Email is already in use!"));
@@ -80,6 +100,7 @@ public class AuthController {
             try {
                 userRole = Role.valueOf(signUpRequest.getRole().toUpperCase());
             } catch (IllegalArgumentException e) {
+                logger.warn("Registration failed: Invalid role requested: {}", signUpRequest.getRole());
                 return ResponseEntity
                         .badRequest()
                         .body(new MessageResponse("Error: Invalid Role!"));
@@ -97,15 +118,17 @@ public class AuthController {
                 .build();
 
         userRepository.save(user);
+        logger.info("User registered successfully with email: {} and role: {}", signUpRequest.getEmail(), userRole);
 
         return ResponseEntity.ok(new MessageResponse("User registered successfully!"));
     }
 
     @PostMapping("/google")
     public ResponseEntity<?> googleLogin(@Valid @RequestBody GoogleLoginRequest googleRequest) {
+        logger.info("Google Sign-In request received.");
         try {
-            // Check if googleClientId is configured; if empty, we provide a descriptive message or log
             if (googleClientId == null || googleClientId.trim().isEmpty() || googleClientId.equals("YOUR_GOOGLE_CLIENT_ID")) {
+                logger.warn("Google Sign-In failed: googleClientId is not configured in application.properties.");
                 return ResponseEntity.badRequest().body(new MessageResponse("Error: Google Client ID is not configured on the backend application.properties. Please verify propertymanagement.googleClientId configuration."));
             }
 
@@ -118,6 +141,7 @@ public class AuthController {
 
             GoogleIdToken idToken = verifier.verify(googleRequest.getCredential());
             if (idToken == null) {
+                logger.warn("Google Sign-In failed: Invalid Google Token / verification failed.");
                 return ResponseEntity.badRequest().body(new MessageResponse("Error: Invalid Google Token!"));
             }
 
@@ -135,20 +159,19 @@ public class AuthController {
 
             if (userOptional.isPresent()) {
                 user = userOptional.get();
-                // Update Google ID and provider if not set
                 if (user.getGoogleId() == null) {
                     user.setGoogleId(googleId);
                     user.setAuthProvider(AuthProvider.GOOGLE);
                     userRepository.save(user);
+                    logger.info("Updated existing local user account email: {} to Google Authentication Provider.", email);
                 }
             } else {
-                // Register new user
                 Role userRole = Role.TENANT;
                 if (googleRequest.getRole() != null) {
                     try {
                         userRole = Role.valueOf(googleRequest.getRole().toUpperCase());
                     } catch (IllegalArgumentException e) {
-                        // fallback to TENANT
+                        logger.warn("Google registration fallback to TENANT role because invalid role requested: {}", googleRequest.getRole());
                     }
                 }
 
@@ -162,10 +185,13 @@ public class AuthController {
                         .build();
 
                 userRepository.save(user);
+                logger.info("Registered new user email: {} via Google authentication with role: {}", email, userRole);
             }
 
             // Generate application JWT token
             String jwt = jwtUtils.generateTokenFromEmail(email);
+
+            logger.info("Google Sign-In successful for email: {}, User ID: {}, Role: {}", email, user.getId(), user.getRole().name());
 
             return ResponseEntity.ok(new JwtResponse(jwt,
                     user.getId(),
@@ -175,6 +201,7 @@ public class AuthController {
                     user.getRole().name()));
 
         } catch (Exception e) {
+            logger.error("Error occurred during Google ID token verification: {}", e.getMessage(), e);
             return ResponseEntity.internalServerError().body(new MessageResponse("Error verifying Google ID token: " + e.getMessage()));
         }
     }
@@ -183,16 +210,23 @@ public class AuthController {
     public ResponseEntity<?> changePassword(@Valid @RequestBody ChangePasswordRequest request) {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         if (authentication == null || !authentication.isAuthenticated() || authentication.getPrincipal().equals("anonymousUser")) {
+            logger.warn("Password change failed: Anonymous / Unauthorized user.");
             return ResponseEntity.status(401).body(new MessageResponse("Error: Unauthorized!"));
         }
 
         UserDetailsImpl userDetails = (UserDetailsImpl) authentication.getPrincipal();
+        logger.info("Password change request received for user: {}", userDetails.getEmail());
+
         User user = userRepository.findByEmail(userDetails.getEmail())
-                .orElseThrow(() -> new RuntimeException("Error: User not found!"));
+                .orElseThrow(() -> {
+                    logger.error("Password change failed: User not found in database: {}", userDetails.getEmail());
+                    return new RuntimeException("Error: User not found!");
+                });
 
         // Check if the current password is correct (for LOCAL accounts)
         if (user.getAuthProvider() == AuthProvider.LOCAL && user.getPassword() != null) {
             if (!encoder.matches(request.getCurrentPassword(), user.getPassword())) {
+                logger.warn("Password change failed for user: {} - Current password is incorrect.", userDetails.getEmail());
                 return ResponseEntity.badRequest().body(new MessageResponse("Error: Current password is incorrect!"));
             }
         }
@@ -200,6 +234,7 @@ public class AuthController {
         // Update password
         user.setPassword(encoder.encode(request.getNewPassword()));
         userRepository.save(user);
+        logger.info("Password updated successfully for user: {}", userDetails.getEmail());
 
         return ResponseEntity.ok(new MessageResponse("Password updated successfully!"));
     }
