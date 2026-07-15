@@ -9,7 +9,6 @@ import com.userdocumentportal.repository.DocumentRepository;
 import com.userdocumentportal.repository.UserRepository;
 import com.userdocumentportal.service.DocumentService;
 import com.userdocumentportal.service.S3Service;
-import com.userdocumentportal.service.DocumentProcessingService;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,7 +19,6 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.IOException;
 import java.time.LocalDate;
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
 @Service
@@ -37,8 +35,6 @@ public class DocumentServiceImpl implements DocumentService {
     @Autowired
     private S3Service s3Service;
 
-    @Autowired
-    private DocumentProcessingService processingService;
 
     @Override
     public List<DocumentDto> getDocumentsByUser(Long userId) {
@@ -116,21 +112,6 @@ public class DocumentServiceImpl implements DocumentService {
         logger.info("Document metadata successfully saved to database. Document ID: {}, assigned key: '{}'", 
                 savedDoc.getId(), s3Key);
 
-        // Trigger processing workflow in background thread
-        CompletableFuture.runAsync(() -> {
-            try {
-                logger.info("Background thread: starting processing for Document ID: {}", savedDoc.getId());
-                savedDoc.setStatus("Processing");
-                documentRepository.save(savedDoc);
-                
-                processingService.processDocument(savedDoc.getId());
-                logger.info("Background thread: successfully processed Document ID: {}", savedDoc.getId());
-            } catch (Exception e) {
-                logger.error("Background thread: failed to process Document ID: {}", savedDoc.getId(), e);
-                savedDoc.setStatus("Failed");
-                documentRepository.save(savedDoc);
-            }
-        });
     }
 
     @Override
@@ -150,27 +131,6 @@ public class DocumentServiceImpl implements DocumentService {
         return fileData;
     }
 
-    @Override
-    public byte[] downloadProcessedDocument(Long id) {
-        logger.info("Starting processed download workflow for document ID: {}", id);
-        
-        Document doc = documentRepository.findById(id)
-                .orElseThrow(() -> {
-                    logger.warn("Download failed: Document metadata not found in database for ID: {}", id);
-                    return new FileNotFoundException("Document not found with id: " + id);
-                });
-
-        if (doc.getProcessedS3Key() == null) {
-            logger.warn("Download failed: Document ID {} does not have a processed S3 file.", id);
-            throw new StorageException("Document has not been processed yet.");
-        }
-
-        logger.info("Document ID: {} matches processed S3 key: '{}'. Downloading.", id, doc.getProcessedS3Key());
-        byte[] fileData = s3Service.downloadFile(doc.getProcessedS3Key());
-        logger.info("File download successful for S3 key: '{}', downloaded size: {} bytes", doc.getProcessedS3Key(), fileData.length);
-        
-        return fileData;
-    }
 
     @Override
     public void deleteDocument(Long id) {
@@ -187,12 +147,6 @@ public class DocumentServiceImpl implements DocumentService {
         s3Service.deleteFile(doc.getS3Key());
         logger.info("S3 deletion successful for original key: '{}'", doc.getS3Key());
 
-        // Delete processed file from S3 if it exists
-        if (doc.getProcessedS3Key() != null) {
-            logger.info("Deleting processed file from S3 with key: '{}'", doc.getProcessedS3Key());
-            s3Service.deleteFile(doc.getProcessedS3Key());
-            logger.info("S3 deletion successful for processed key: '{}'", doc.getProcessedS3Key());
-        }
 
         documentRepository.delete(doc);
         logger.info("Document ID: {} metadata successfully deleted from MySQL database.", id);
