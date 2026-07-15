@@ -56,6 +56,22 @@ public class AuthController {
     public ResponseEntity<?> authenticateUser(@Valid @RequestBody LoginRequest loginRequest) {
         logger.info("Login attempt received for email: {}", loginRequest.getEmail());
 
+        Optional<User> userOptional = userRepository.findByEmail(loginRequest.getEmail());
+        if (!userOptional.isPresent()) {
+            logger.warn("Login failed: Email {} is not registered", loginRequest.getEmail());
+            return ResponseEntity
+                    .badRequest()
+                    .body(new MessageResponse("Error: Account is not registered. Please sign up first."));
+        }
+
+        User user = userOptional.get();
+        if (user.getAuthProvider() == AuthProvider.GOOGLE) {
+            logger.warn("Login failed: Email {} is registered via Google", loginRequest.getEmail());
+            return ResponseEntity
+                    .badRequest()
+                    .body(new MessageResponse("Error: This account is registered via Google. Please sign in with Google."));
+        }
+
         try {
             Authentication authentication = authenticationManager.authenticate(
                     new UsernamePasswordAuthenticationToken(loginRequest.getEmail(), loginRequest.getPassword()));
@@ -163,26 +179,31 @@ public class AuthController {
                     logger.info("Updated existing local user account email: {} to Google Authentication Provider.", email);
                 }
             } else {
-                Role userRole = Role.TENANT;
-                if (googleRequest.getRole() != null) {
-                    try {
-                        userRole = Role.valueOf(googleRequest.getRole().toUpperCase());
-                    } catch (IllegalArgumentException e) {
-                        logger.warn("Google registration fallback to TENANT role because invalid role requested: {}", googleRequest.getRole());
+                if (googleRequest.getIsSignUp() != null && googleRequest.getIsSignUp()) {
+                    Role userRole = Role.OWNER; // Use OWNER for property management registration
+                    if (googleRequest.getRole() != null) {
+                        try {
+                            userRole = Role.valueOf(googleRequest.getRole().toUpperCase());
+                        } catch (IllegalArgumentException e) {
+                            logger.warn("Google registration fallback to OWNER role because invalid role requested: {}", googleRequest.getRole());
+                        }
                     }
+
+                    user = User.builder()
+                            .companyName(null) // Null initially so they are prompted to set it
+                            .fullName(firstName + " " + lastName)
+                            .email(email)
+                            .authProvider(AuthProvider.GOOGLE)
+                            .googleId(googleId)
+                            .role(userRole)
+                            .build();
+
+                    userRepository.save(user);
+                    logger.info("Registered new user email: {} via Google authentication without company name", email);
+                } else {
+                    logger.warn("Google Sign-In failed: Email {} is not registered.", email);
+                    return ResponseEntity.badRequest().body(new MessageResponse("Error: Account is not registered. Please sign up first."));
                 }
-
-                user = User.builder()
-                        .companyName(firstName + " Inc")
-                        .fullName(firstName + " " + lastName)
-                        .email(email)
-                        .authProvider(AuthProvider.GOOGLE)
-                        .googleId(googleId)
-                        .role(userRole)
-                        .build();
-
-                userRepository.save(user);
-                logger.info("Registered new user email: {} via Google authentication with role: {}", email, userRole);
             }
 
             // Generate application JWT token
@@ -234,5 +255,44 @@ public class AuthController {
         logger.info("Password updated successfully for user: {}", userDetails.getEmail());
 
         return ResponseEntity.ok(new MessageResponse("Password updated successfully!"));
+    }
+
+    @PutMapping("/update-company")
+    public ResponseEntity<?> updateCompany(@Valid @RequestBody UpdateCompanyRequest request) {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || !authentication.isAuthenticated() || authentication.getPrincipal().equals("anonymousUser")) {
+            logger.warn("Company update failed: Anonymous / Unauthorized user.");
+            return ResponseEntity.status(401).body(new MessageResponse("Error: Unauthorized!"));
+        }
+
+        UserDetailsImpl userDetails = (UserDetailsImpl) authentication.getPrincipal();
+        logger.info("Company update request received for user ID: {} to company: {}", userDetails.getId(), request.getCompanyName());
+
+        String newCompanyName = request.getCompanyName().trim();
+        if (newCompanyName.isEmpty()) {
+            return ResponseEntity.badRequest().body(new MessageResponse("Error: Company Name cannot be empty!"));
+        }
+
+        if (userRepository.existsByCompanyName(newCompanyName)) {
+            logger.warn("Company update failed: Company Name {} is already in use!", newCompanyName);
+            return ResponseEntity.badRequest().body(new MessageResponse("Error: Company Name is already in use!"));
+        }
+
+        User user = userRepository.findById(userDetails.getId())
+                .orElseThrow(() -> new RuntimeException("Error: User not found!"));
+
+        user.setCompanyName(newCompanyName);
+        userRepository.save(user);
+        logger.info("Company updated successfully for user ID: {} to: {}", userDetails.getId(), newCompanyName);
+
+        // Generate a new JWT token with updated claims
+        String jwt = jwtUtils.generateTokenFromEmail(user.getEmail());
+
+        return ResponseEntity.ok(new JwtResponse(jwt,
+                user.getId(),
+                user.getEmail(),
+                user.getCompanyName(),
+                user.getFullName(),
+                user.getRole().name()));
     }
 }

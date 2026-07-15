@@ -9,4 +9,8 @@ public class GoogleLoginRequest {
     private String credential;
 
     private String role; // Optional: Used to register as OWNER or TENANT if the user is new
+
+    private String companyName;
+
+    private Boolean isSignUp;
 }

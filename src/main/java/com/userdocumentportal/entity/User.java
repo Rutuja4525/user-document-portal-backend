@@ -22,7 +22,6 @@ public class User {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @NotBlank
     @Column(name = "company_name", unique = true)
     private String companyName;
 
