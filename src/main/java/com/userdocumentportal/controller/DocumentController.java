@@ -72,6 +72,21 @@ public class DocumentController {
                 .body(fileData);
     }
 
+    // Download processed document content
+    @GetMapping("/documents/{id}/download-processed")
+    public ResponseEntity<byte[]> downloadProcessedDocument(@PathVariable Long id) {
+        logger.info("Received download request for processed document ID: {}", id);
+        
+        DocumentDto doc = documentService.getDocumentById(id);
+        byte[] fileData = documentService.downloadProcessedDocument(id);
+
+        logger.info("Successfully completed processed download API request for document ID: {}, file name: '{}'", id, doc.getName());
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"processed_" + doc.getName() + "\"")
+                .body(fileData);
+    }
+
     // Delete a document
     @DeleteMapping("/documents/{id}")
     public ResponseEntity<?> deleteDocument(@PathVariable Long id) {

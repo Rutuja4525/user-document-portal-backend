@@ -21,6 +21,7 @@ public class DocumentDto {
     private Long userId;
     private String s3Key;
     private String processedS3Key;
+    private String processingStatus;
     private String contentType;
 
     // Constructor matching original DocumentDto for backwards compatibility

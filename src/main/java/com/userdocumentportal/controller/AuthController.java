@@ -28,6 +28,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Collections;
+import java.util.List;
 import java.util.Optional;
 
 @CrossOrigin(origins = "*", maxAge = 3600)
@@ -294,5 +295,13 @@ public class AuthController {
                 user.getCompanyName(),
                 user.getFullName(),
                 user.getRole().name()));
+    }
+
+    @GetMapping("/companies")
+    public ResponseEntity<List<String>> getAllCompanies() {
+        logger.info("Request received to fetch all distinct company names");
+        List<String> companies = userRepository.findAllCompanyNames();
+        logger.info("Successfully fetched {} company names", companies.size());
+        return ResponseEntity.ok(companies);
     }
 }

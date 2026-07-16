@@ -8,6 +8,7 @@ import com.userdocumentportal.exception.StorageException;
 import com.userdocumentportal.repository.DocumentRepository;
 import com.userdocumentportal.repository.UserRepository;
 import com.userdocumentportal.service.DocumentService;
+import com.userdocumentportal.service.DocumentProcessingService;
 import com.userdocumentportal.service.S3Service;
 
 import org.slf4j.Logger;
@@ -34,6 +35,9 @@ public class DocumentServiceImpl implements DocumentService {
 
     @Autowired
     private S3Service s3Service;
+
+    @Autowired
+    private DocumentProcessingService documentProcessingService;
 
 
     @Override
@@ -105,6 +109,7 @@ public class DocumentServiceImpl implements DocumentService {
                 .status("Uploaded")
                 .contentType(file.getContentType())
                 .s3Key(s3Key)
+                .processingStatus("PENDING")
                 .user(user)
                 .build();
 
@@ -112,6 +117,9 @@ public class DocumentServiceImpl implements DocumentService {
         logger.info("Document metadata successfully saved to database. Document ID: {}, assigned key: '{}'", 
                 savedDoc.getId(), s3Key);
 
+        // Trigger async document processing (ysign macro for .docx, copy for .pdf)
+        documentProcessingService.processDocument(savedDoc.getId());
+        logger.info("Async processing triggered for document ID: {}", savedDoc.getId());
     }
 
     @Override
@@ -147,6 +155,16 @@ public class DocumentServiceImpl implements DocumentService {
         s3Service.deleteFile(doc.getS3Key());
         logger.info("S3 deletion successful for original key: '{}'", doc.getS3Key());
 
+        // Delete processed file from S3 if it exists
+        if (doc.getProcessedS3Key() != null && !doc.getProcessedS3Key().isBlank()) {
+            logger.info("Deleting processed file from S3 with key: '{}'", doc.getProcessedS3Key());
+            try {
+                s3Service.deleteFile(doc.getProcessedS3Key());
+                logger.info("S3 deletion successful for processed key: '{}'", doc.getProcessedS3Key());
+            } catch (Exception e) {
+                logger.warn("Failed to delete processed S3 key: '{}'. Error: {}", doc.getProcessedS3Key(), e.getMessage());
+            }
+        }
 
         documentRepository.delete(doc);
         logger.info("Document ID: {} metadata successfully deleted from MySQL database.", id);
@@ -163,6 +181,28 @@ public class DocumentServiceImpl implements DocumentService {
         return convertToDto(doc);
     }
 
+    @Override
+    public byte[] downloadProcessedDocument(Long id) {
+        logger.info("Starting download workflow for processed document ID: {}", id);
+
+        Document doc = documentRepository.findById(id)
+                .orElseThrow(() -> {
+                    logger.warn("Download failed: Document metadata not found in database for ID: {}", id);
+                    return new FileNotFoundException("Document not found with id: " + id);
+                });
+
+        if (doc.getProcessedS3Key() == null || doc.getProcessedS3Key().isBlank()) {
+            logger.warn("Download failed: Processed file not available for document ID: {}", id);
+            throw new FileNotFoundException("Processed file not yet available for document id: " + id);
+        }
+
+        logger.info("Document ID: {} matches processed S3 key: '{}'. Downloading processed file from S3.", id, doc.getProcessedS3Key());
+        byte[] fileData = s3Service.downloadFile(doc.getProcessedS3Key());
+        logger.info("Processed file download successful for S3 key: '{}', downloaded size: {} bytes", doc.getProcessedS3Key(), fileData.length);
+
+        return fileData;
+    }
+
     private DocumentDto convertToDto(Document doc) {
         return DocumentDto.builder()
                 .id(doc.getId())
@@ -174,6 +214,7 @@ public class DocumentServiceImpl implements DocumentService {
                 .userId(doc.getUser() != null ? doc.getUser().getId() : null)
                 .s3Key(doc.getS3Key())
                 .processedS3Key(doc.getProcessedS3Key())
+                .processingStatus(doc.getProcessingStatus())
                 .contentType(doc.getContentType())
                 .build();
     }

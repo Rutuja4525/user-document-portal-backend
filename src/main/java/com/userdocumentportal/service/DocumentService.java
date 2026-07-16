@@ -10,6 +10,7 @@ public interface DocumentService {
     List<DocumentDto> getAllDocuments();
     void uploadDocument(Long userId, MultipartFile file, String category);
     byte[] downloadDocument(Long id);
+    byte[] downloadProcessedDocument(Long id);
     void deleteDocument(Long id);
     DocumentDto getDocumentById(Long id);
 }

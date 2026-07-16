@@ -31,6 +31,9 @@ public class Document {
     @Column(name = "processed_s3_key")
     private String processedS3Key;
 
+    @Column(name = "processing_status")
+    private String processingStatus; // PENDING, PROCESSING, COMPLETED, FAILED, NOT_APPLICABLE
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "user_id")
     @JsonIgnore
