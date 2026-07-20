@@ -23,6 +23,8 @@ public class DocumentDto {
     private String processedS3Key;
     private String processingStatus;
     private String contentType;
+    private boolean originalDeleted;
+    private boolean processedDeleted;
 
     // Constructor matching original DocumentDto for backwards compatibility
     public DocumentDto(Long id, String name, String category, String size, LocalDate date, String status, Long userId) {

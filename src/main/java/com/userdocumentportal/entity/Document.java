@@ -38,4 +38,12 @@ public class Document {
     @JoinColumn(name = "user_id")
     @JsonIgnore
     private User user;
+
+    @Column(name = "original_deleted", nullable = false)
+    @Builder.Default
+    private boolean originalDeleted = false;
+
+    @Column(name = "processed_deleted", nullable = false)
+    @Builder.Default
+    private boolean processedDeleted = false;
 }

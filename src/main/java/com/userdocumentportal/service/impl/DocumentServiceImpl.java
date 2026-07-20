@@ -43,14 +43,14 @@ public class DocumentServiceImpl implements DocumentService {
     @Override
     public List<DocumentDto> getDocumentsByUser(Long userId) {
         logger.debug("Fetching documents from database for user ID: {}", userId);
-        List<Document> docs = documentRepository.findByUserId(userId);
+        List<Document> docs = documentRepository.findActiveDocumentsByUserId(userId);
         return docs.stream().map(this::convertToDto).collect(Collectors.toList());
     }
 
     @Override
     public List<DocumentDto> getAllDocuments() {
         logger.debug("Fetching all documents from database globally");
-        List<Document> docs = documentRepository.findAll();
+        List<Document> docs = documentRepository.findActiveDocuments();
         return docs.stream().map(this::convertToDto).collect(Collectors.toList());
     }
 
@@ -132,6 +132,11 @@ public class DocumentServiceImpl implements DocumentService {
                     return new FileNotFoundException("Document not found with id: " + id);
                 });
 
+        if (doc.isOriginalDeleted()) {
+            logger.warn("Download failed: Document with ID: {} original version has been soft-deleted", id);
+            throw new FileNotFoundException("Document not found with id: " + id);
+        }
+
         logger.info("Document ID: {} matches S3 key: '{}'. Downloading file content from S3.", id, doc.getS3Key());
         byte[] fileData = s3Service.downloadFile(doc.getS3Key());
         logger.info("File download successful for S3 key: '{}', downloaded size: {} bytes", doc.getS3Key(), fileData.length);
@@ -141,8 +146,8 @@ public class DocumentServiceImpl implements DocumentService {
 
 
     @Override
-    public void deleteDocument(Long id) {
-        logger.info("Starting deletion workflow for document ID: {}", id);
+    public void deleteDocument(Long id, String type) {
+        logger.info("Starting deletion workflow for document ID: {}, type: {}", id, type);
         
         Document doc = documentRepository.findById(id)
                 .orElseThrow(() -> {
@@ -150,24 +155,23 @@ public class DocumentServiceImpl implements DocumentService {
                     return new FileNotFoundException("Document not found with id: " + id);
                 });
 
-        // Delete original file from S3
-        logger.info("Deleting original file from S3 with key: '{}'", doc.getS3Key());
-        s3Service.deleteFile(doc.getS3Key());
-        logger.info("S3 deletion successful for original key: '{}'", doc.getS3Key());
-
-        // Delete processed file from S3 if it exists
-        if (doc.getProcessedS3Key() != null && !doc.getProcessedS3Key().isBlank()) {
-            logger.info("Deleting processed file from S3 with key: '{}'", doc.getProcessedS3Key());
-            try {
-                s3Service.deleteFile(doc.getProcessedS3Key());
-                logger.info("S3 deletion successful for processed key: '{}'", doc.getProcessedS3Key());
-            } catch (Exception e) {
-                logger.warn("Failed to delete processed S3 key: '{}'. Error: {}", doc.getProcessedS3Key(), e.getMessage());
+        if ("processed".equalsIgnoreCase(type)) {
+            if (doc.isProcessedDeleted()) {
+                logger.warn("Delete failed: Processed document with ID: {} is already soft-deleted", id);
+                throw new FileNotFoundException("Processed document not found with id: " + id);
             }
+            doc.setProcessedDeleted(true);
+            logger.info("Document ID: {} processed version marked as soft deleted.", id);
+        } else {
+            if (doc.isOriginalDeleted()) {
+                logger.warn("Delete failed: Original document with ID: {} is already soft-deleted", id);
+                throw new FileNotFoundException("Original document not found with id: " + id);
+            }
+            doc.setOriginalDeleted(true);
+            logger.info("Document ID: {} original version marked as soft deleted.", id);
         }
 
-        documentRepository.delete(doc);
-        logger.info("Document ID: {} metadata successfully deleted from MySQL database.", id);
+        documentRepository.save(doc);
     }
 
     @Override
@@ -178,6 +182,10 @@ public class DocumentServiceImpl implements DocumentService {
                     logger.warn("Metadata lookup failed for Document ID: {}", id);
                     return new FileNotFoundException("Document not found with id: " + id);
                 });
+        if (doc.isOriginalDeleted() && doc.isProcessedDeleted()) {
+            logger.warn("Metadata lookup failed: Document ID: {} has been fully soft-deleted", id);
+            throw new FileNotFoundException("Document not found with id: " + id);
+        }
         return convertToDto(doc);
     }
 
@@ -190,6 +198,11 @@ public class DocumentServiceImpl implements DocumentService {
                     logger.warn("Download failed: Document metadata not found in database for ID: {}", id);
                     return new FileNotFoundException("Document not found with id: " + id);
                 });
+
+        if (doc.isProcessedDeleted()) {
+            logger.warn("Download failed: Document with ID: {} processed version has been soft-deleted", id);
+            throw new FileNotFoundException("Document not found with id: " + id);
+        }
 
         if (doc.getProcessedS3Key() == null || doc.getProcessedS3Key().isBlank()) {
             logger.warn("Download failed: Processed file not available for document ID: {}", id);
@@ -216,6 +229,8 @@ public class DocumentServiceImpl implements DocumentService {
                 .processedS3Key(doc.getProcessedS3Key())
                 .processingStatus(doc.getProcessingStatus())
                 .contentType(doc.getContentType())
+                .originalDeleted(doc.isOriginalDeleted())
+                .processedDeleted(doc.isProcessedDeleted())
                 .build();
     }
 }

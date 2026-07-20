@@ -11,6 +11,6 @@ public interface DocumentService {
     void uploadDocument(Long userId, MultipartFile file, String category);
     byte[] downloadDocument(Long id);
     byte[] downloadProcessedDocument(Long id);
-    void deleteDocument(Long id);
+    void deleteDocument(Long id, String type);
     DocumentDto getDocumentById(Long id);
 }

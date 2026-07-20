@@ -89,10 +89,12 @@ public class DocumentController {
 
     // Delete a document
     @DeleteMapping("/documents/{id}")
-    public ResponseEntity<?> deleteDocument(@PathVariable Long id) {
-        logger.info("Received delete request for document ID: {}", id);
-        documentService.deleteDocument(id);
-        logger.info("Successfully deleted document ID: {} from system", id);
+    public ResponseEntity<?> deleteDocument(
+            @PathVariable Long id,
+            @RequestParam(value = "type", required = false, defaultValue = "original") String type) {
+        logger.info("Received delete request for document ID: {}, type: {}", id, type);
+        documentService.deleteDocument(id, type);
+        logger.info("Successfully deleted document ID: {}, type: {} from system", id, type);
         return ResponseEntity.ok().body("Document deleted successfully!");
     }
 }
